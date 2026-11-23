@@ -9,8 +9,17 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_score,
+    recall_score,
+    r2_score,
+)
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 
 FEATURES = [
@@ -144,6 +153,62 @@ def train_linear(data: pd.DataFrame, split: int, pca_components: int = 0) -> tup
     predicted = base * (1 + model.predict(x_test))
     artifacts = {"scaler": scaler, "pca": reducer, "model": model}
     return model, metrics(actual, predicted), {"actual": actual, "predicted": predicted, "dates": data.loc[split:, "date"].astype(str).to_numpy(), "artifacts": artifacts}
+
+
+def train_direction_classifiers(
+    data: pd.DataFrame,
+    split: int,
+    pca_components: Iterable[int] = (12, 6, 3, 1),
+) -> tuple[dict[str, dict], dict[str, dict]]:
+    y = (data["target_return"] > 0).astype(int)
+    x_train_full = data.loc[:split - 1, FEATURES]
+    x_test_full = data.loc[split:, FEATURES]
+    y_train = y.loc[:split - 1]
+    y_test = y.loc[split:]
+    all_metrics: dict[str, dict] = {}
+    all_artifacts: dict[str, dict] = {}
+
+    for components in pca_components:
+        components = int(components)
+        if components <= 0:
+            raise ValueError("PCA phải dùng số thành phần dương: 12, 6, 3 hoặc 1.")
+        if components > len(FEATURES):
+            raise ValueError(
+                f"PCA={components} vượt quá số đặc trưng hiện có ({len(FEATURES)})."
+            )
+
+        scaler = StandardScaler()
+        x_train = scaler.fit_transform(x_train_full)
+        x_test = scaler.transform(x_test_full)
+        reducer = PCA(n_components=components, random_state=42)
+        x_train = reducer.fit_transform(x_train)
+        x_test = reducer.transform(x_test)
+
+        models = {
+            "K-NN": KNeighborsClassifier(n_neighbors=5),
+            "Logistic Regression": LogisticRegression(
+                max_iter=1000,
+                random_state=42,
+            ),
+        }
+        for model_name, model in models.items():
+            model.fit(x_train, y_train)
+            predicted = model.predict(x_test)
+            key = f"{model_name} (PCA={components})"
+            all_metrics[key] = {
+                "Accuracy": float(accuracy_score(y_test, predicted)),
+                "Precision": float(precision_score(y_test, predicted, zero_division=0)),
+                "Recall": float(recall_score(y_test, predicted, zero_division=0)),
+                "F1": float(f1_score(y_test, predicted, zero_division=0)),
+            }
+            all_artifacts[key] = {
+                "scaler": scaler,
+                "pca": reducer,
+                "model": model,
+                "pca_components": components,
+            }
+
+    return all_metrics, all_artifacts
 
 
 def build_lstm_sequences(data: pd.DataFrame, window: int, split: int):

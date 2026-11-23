@@ -90,8 +90,12 @@ st.download_button(
 )
 
 st.subheader("So sánh mô hình")
-score = pd.DataFrame(metrics).T.drop(index=["rows", "split", "window"], errors="ignore")
-st.dataframe(score.style.format("{:.6f}"), use_container_width=True)
+score = pd.DataFrame(metrics).T.drop(
+    index=["rows", "split", "window", "pca_components"],
+    errors="ignore",
+)
+st.caption("MAE/RMSE/R2/MAPE dành cho mô hình giá; Accuracy/Precision/Recall/F1 dành cho K-NN và Logistic Regression.")
+st.dataframe(score.style.format("{:.6f}", na_rep="-"), use_container_width=True)
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=pred["date"], y=pred["actual"], name="Giá thật", line={"color": "#111827"}))
