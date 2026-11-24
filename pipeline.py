@@ -9,7 +9,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
-from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -19,7 +19,7 @@ from sklearn.metrics import (
     recall_score,
     r2_score,
 )
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 
 FEATURES = [
@@ -159,7 +159,7 @@ def train_direction_classifiers(
     data: pd.DataFrame,
     split: int,
     pca_components: Iterable[int] = (12, 6, 3, 1),
-) -> tuple[dict[str, dict], dict[str, dict]]:
+) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict]]:
     y = (data["target_return"] > 0).astype(int)
     x_train_full = data.loc[:split - 1, FEATURES]
     x_test_full = data.loc[split:, FEATURES]
@@ -167,9 +167,13 @@ def train_direction_classifiers(
     y_test = y.loc[split:]
     all_metrics: dict[str, dict] = {}
     all_artifacts: dict[str, dict] = {}
+    pca_report: dict[str, dict] = {}
 
-    for components in pca_components:
-        components = int(components)
+    original_features = len(FEATURES)
+    stages = [original_features, *[int(value) for value in pca_components]]
+    stages = list(dict.fromkeys(stage for stage in stages if stage > 0))
+
+    for components in stages:
         if components <= 0:
             raise ValueError("PCA phải dùng số thành phần dương: 12, 6, 3 hoặc 1.")
         if components > len(FEATURES):
@@ -180,35 +184,44 @@ def train_direction_classifiers(
         scaler = StandardScaler()
         x_train = scaler.fit_transform(x_train_full)
         x_test = scaler.transform(x_test_full)
-        reducer = PCA(n_components=components, random_state=42)
-        x_train = reducer.fit_transform(x_train)
-        x_test = reducer.transform(x_test)
+        if components == original_features:
+            reducer = None
+            stage_label = "22 đặc trưng gốc"
+            explained_ratio = 1.0
+        else:
+            reducer = PCA(n_components=components, random_state=42)
+            x_train = reducer.fit_transform(x_train)
+            x_test = reducer.transform(x_test)
+            stage_label = f"PCA {components}"
+            explained_ratio = float(reducer.explained_variance_ratio_.sum())
 
-        models = {
-            "K-NN": KNeighborsClassifier(n_neighbors=5),
-            "Logistic Regression": LogisticRegression(
-                max_iter=1000,
-                random_state=42,
-            ),
+        model = RandomForestClassifier(
+            n_estimators=200,
+            random_state=42,
+            n_jobs=-1,
+            class_weight="balanced",
+        )
+        model.fit(x_train, y_train)
+        predicted = model.predict(x_test)
+        key = f"Random Forest ({stage_label})"
+        all_metrics[key] = {
+            "Accuracy": float(accuracy_score(y_test, predicted)),
+            "Precision": float(precision_score(y_test, predicted, zero_division=0)),
+            "Recall": float(recall_score(y_test, predicted, zero_division=0)),
+            "F1": float(f1_score(y_test, predicted, zero_division=0)),
         }
-        for model_name, model in models.items():
-            model.fit(x_train, y_train)
-            predicted = model.predict(x_test)
-            key = f"{model_name} (PCA={components})"
-            all_metrics[key] = {
-                "Accuracy": float(accuracy_score(y_test, predicted)),
-                "Precision": float(precision_score(y_test, predicted, zero_division=0)),
-                "Recall": float(recall_score(y_test, predicted, zero_division=0)),
-                "F1": float(f1_score(y_test, predicted, zero_division=0)),
-            }
-            all_artifacts[key] = {
-                "scaler": scaler,
-                "pca": reducer,
-                "model": model,
-                "pca_components": components,
-            }
+        all_artifacts[key] = {
+            "scaler": scaler,
+            "pca": reducer,
+            "model": model,
+            "pca_components": components,
+        }
+        pca_report[stage_label] = {
+            "Số đặc trưng": components,
+            "Tỷ lệ phương sai PCA": explained_ratio * 100,
+        }
 
-    return all_metrics, all_artifacts
+    return all_metrics, all_artifacts, pca_report
 
 
 def build_lstm_sequences(data: pd.DataFrame, window: int, split: int):
