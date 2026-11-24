@@ -102,28 +102,31 @@ model_metrics = pd.DataFrame.from_dict(
     {name: values for name, values in metrics.items() if name not in ignored_keys},
     orient="index",
 )
-
-price_names = [
-    name for name in model_metrics.index
-    if name.startswith("Linear Regression") or name == "LSTM"
+comparison_columns = [
+    "MAE", "RMSE", "R2", "MAPE",
+    "Accuracy", "Precision", "Recall", "F1",
 ]
-price_metrics = model_metrics.loc[
-    [name for name in price_names if {"MAE", "RMSE", "R2", "MAPE"}.intersection(model_metrics.loc[name].dropna().index)],
-    [column for column in ["MAE", "RMSE", "R2", "MAPE"] if column in model_metrics.columns],
+comparison_columns = [
+    column for column in comparison_columns
+    if column in model_metrics.columns
 ]
-if not price_metrics.empty:
-    st.dataframe(price_metrics.style.format("{:.6f}", na_rep="-"), use_container_width=True)
-else:
-    st.info("Chưa có kết quả mô hình dự đoán giá.")
-
-rf_names = [name for name in model_metrics.index if name.startswith("Random Forest")]
-if rf_names:
-    rf_columns = [column for column in ["Accuracy", "Precision", "Recall", "F1"] if column in model_metrics.columns]
-    st.markdown("**Random Forest theo số chiều PCA**")
+comparison_metrics = model_metrics.loc[
+    model_metrics.index[
+        model_metrics[comparison_columns].notna().any(axis=1)
+    ],
+    comparison_columns,
+]
+if not comparison_metrics.empty:
+    st.caption(
+        "MAE/RMSE/R2/MAPE dành cho mô hình dự đoán giá; "
+        "Accuracy/Precision/Recall/F1 dành cho Random Forest."
+    )
     st.dataframe(
-        model_metrics.loc[rf_names, rf_columns].style.format("{:.6f}", na_rep="-"),
+        comparison_metrics.style.format("{:.6f}", na_rep="-"),
         use_container_width=True,
     )
+else:
+    st.info("Chưa có kết quả mô hình.")
 
 st.subheader("Thay đổi PCA")
 st.caption("PCA giảm số chiều đặc trưng kỹ thuật từ 22 xuống 12, 6, 3 và 1 chiều.")
