@@ -10,7 +10,7 @@ MODEL_DIR = ROOT / "models"
 
 st.set_page_config(page_title="GoldML", page_icon="📈", layout="wide")
 st.title("📈 GoldML - Dự đoán giá vàng")
-st.caption("LSTM là mô hình chính. Chọn một thời điểm trong tập kiểm tra để xem dự đoán.")
+st.caption("Chọn một thời điểm trong tập kiểm tra để xem dự đoán.")
 
 metrics_path = MODEL_DIR / "metrics.json"
 pred_path = MODEL_DIR / "predictions.csv"
@@ -19,6 +19,7 @@ if not metrics_path.exists() or not pred_path.exists():
     st.stop()
 
 metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+prediction_source = metrics.get("prediction_source", "LSTM")
 pred = pd.read_csv(pred_path, parse_dates=["date"])
 pred = pred.dropna(subset=["date", "actual", "predicted"]).sort_values("date").reset_index(drop=True)
 if pred.empty:
@@ -29,13 +30,16 @@ left, right = st.columns(2)
 with left:
     st.metric("Số dòng đã xử lý", f"{metrics['rows']:,}")
 with right:
-    st.metric("Cửa sổ LSTM", f"{metrics['window']} phiên")
+    st.metric("Nguồn dự đoán", prediction_source)
 
 st.subheader("Dự đoán tại thời điểm chọn")
 st.info(
     "Danh sách thời điểm lấy từ tập test lịch sử đã lưu trong `predictions.csv`. "
     "Đây là chức năng xem lại dự đoán, chưa phải dữ liệu giá trực tiếp theo thời gian thực."
 )
+
+if metrics.get("lstm_error"):
+    st.warning("LSTM chưa thể chạy vì Windows/Application Control chặn TensorFlow. Hiện đang dùng mô hình Linear Regression.")
 
 date_min = pred["date"].min().date()
 date_max = pred["date"].max().date()
@@ -60,7 +64,7 @@ error_pct = abs(error) / max(abs(float(row["actual"])), 1e-8) * 100
 st.caption(f"Phiên được chọn: {row['date']:%d/%m/%Y %H:%M}")
 metric_cols = st.columns(4)
 metric_cols[0].metric("Giá thật", f"{row['actual']:,.2f}")
-metric_cols[1].metric("Giá LSTM dự đoán", f"{row['predicted']:,.2f}")
+metric_cols[1].metric(f"Giá {prediction_source} dự đoán", f"{row['predicted']:,.2f}")
 metric_cols[2].metric("Chênh lệch", f"{error:+,.2f}")
 metric_cols[3].metric("Sai số tương đối", f"{error_pct:.3f}%")
 
@@ -70,8 +74,8 @@ selected_fig.add_trace(go.Scatter(
     line={"color": "#111827", "width": 1.5},
 ))
 selected_fig.add_trace(go.Scatter(
-    x=pred["date"], y=pred["predicted"], name="LSTM",
-    line={"color": "#b45309", "width": 1.5},
+    x=pred["date"], y=pred["predicted"], name=prediction_source,
+    line={"color": "#b45304", "width": 1.5},
 ))
 selected_fig.add_trace(go.Scatter(
     x=[row["date"]], y=[row["predicted"]], name="Thời điểm chọn",
@@ -85,28 +89,31 @@ st.plotly_chart(selected_fig, use_container_width=True)
 st.download_button(
     "Tải kết quả thời điểm đã chọn",
     data=selected_row.to_csv(index=False).encode("utf-8"),
-    file_name=f"gold_prediction_{row['date']:%Y%m%d_%H%M}.csv",
+    file_name=f"gold_prediction_{row['date']:%Y%m%d%H%M}.csv",
     mime="text/csv",
 )
 
 st.subheader("So sánh mô hình")
-ignored_keys = {"rows", "split", "window", "pca_components", "pcaComponents"}
+ignored_keys = {
+    "rows", "split", "window", "pca_components", "pcaComponents",
+    "prediction_source", "lstm_error", "history",
+}
 model_metrics = pd.DataFrame.from_dict(
     {name: values for name, values in metrics.items() if name not in ignored_keys},
     orient="index",
 )
 
-classifier_names = (
+classifier_names = [
     name for name in model_metrics.index
     if name.startswith("K-NN") or name.startswith("Logistic Regression")
-)
-classifier_names = list(classifier_names)
+]
 regression_names = [name for name in model_metrics.index if name not in classifier_names]
 
 st.markdown("**Mô hình dự đoán giá**")
+price_columns = [column for column in ["MAE", "RMSE", "R2", "MAPE"] if column in model_metrics.columns]
 regression_metrics = model_metrics.loc[
-    [name for name in regression_names if {"MAE", "RMSE", "R2", "MAPE"}.intersection(model_metrics.loc[name].dropna().index)],
-    ["MAE", "RMSE", "R2", "MAPE"],
+    [name for name in regression_names if model_metrics.loc[name, price_columns].notna().any()],
+    price_columns,
 ]
 if regression_metrics.empty:
     st.info("Chưa có kết quả mô hình dự đoán giá.")
@@ -115,17 +122,15 @@ else:
 
 st.markdown("**Mô hình phân loại xu hướng**")
 if classifier_names:
-    classifier_metrics = model_metrics.loc[
-        classifier_names,
-        ["Accuracy", "Precision", "Recall", "F1"],
-    ]
+    classifier_columns = [column for column in ["Accuracy", "Precision", "Recall", "F1"] if column in model_metrics.columns]
+    classifier_metrics = model_metrics.loc[classifier_names, classifier_columns]
     st.dataframe(classifier_metrics.style.format("{:.6f}", na_rep="-"), use_container_width=True)
 else:
     st.info("Chưa có kết quả K-NN/Logistic Regression. Hãy huấn luyện lại bằng `python train.py`.")
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=pred["date"], y=pred["actual"], name="Giá thật", line={"color": "#111827"}))
-fig.add_trace(go.Scatter(x=pred["date"], y=pred["predicted"], name="LSTM", line={"color": "#b45309"}))
+fig.add_trace(go.Scatter(x=pred["date"], y=pred["predicted"], name=prediction_source, line={"color": "#b45304"}))
 fig.update_layout(height=480, xaxis_title="Thời gian", yaxis_title="Giá đóng cửa", hovermode="x unified")
 st.plotly_chart(fig, use_container_width=True)
 
