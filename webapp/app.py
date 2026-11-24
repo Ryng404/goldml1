@@ -99,7 +99,16 @@ ignored_keys = {
     "prediction_source", "lstm_error", "history",
 }
 model_metrics = pd.DataFrame.from_dict(
-    {name: values for name, values in metrics.items() if name not in ignored_keys},
+    {
+        name: values
+        for name, values in metrics.items()
+        if name not in ignored_keys
+        and (
+            name.startswith("Linear Regression")
+            or name.startswith("Random Forest")
+            or name == "LSTM"
+        )
+    },
     orient="index",
 )
 comparison_columns = [
