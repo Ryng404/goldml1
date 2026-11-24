@@ -57,54 +57,35 @@ def main():
         split,
         args.pca_components,
     )
-
+    lstm, lstm_metrics, lstm_output = train_lstm(data, split, args.window, args.epochs)
     joblib.dump(
-        {"default": linear_output["artifacts"], "variants": linear_experiment_artifacts},
+        {
+            "default": linear_output["artifacts"],
+            "variants": linear_experiment_artifacts,
+        },
         model_dir / "linear.joblib",
     )
     joblib.dump(classifier_artifacts, model_dir / "classifiers.joblib")
+    joblib.dump(lstm_output["artifacts"], model_dir / "lstm_preprocess.joblib")
+    lstm.save(model_dir / "lstm.keras")
+    pd.DataFrame({"date": lstm_output["dates"], "actual": lstm_output["actual"], "predicted": lstm_output["predicted"]}).to_csv(model_dir / "predictions.csv", index=False)
     report.to_csv(model_dir / "cleaning_report.csv", index=False)
     data.to_csv(model_dir / "features.csv", index=False)
-
-    all_metrics = {
-        "Linear Regression": linear_metrics,
-        **linear_experiment_metrics,
-        **classifier_metrics,
-        "rows": len(data),
-        "split": split,
-        "window": args.window,
-        "pca_components": args.pca_components,
-    }
-
-    prediction_output = linear_output
-    prediction_source = f"Linear Regression (PCA={linear_pca_components})"
-    lstm_error = None
-    try:
-        lstm, lstm_metrics, lstm_output = train_lstm(data, split, args.window, args.epochs)
-        lstm.save(model_dir / "lstm.keras")
-        joblib.dump(lstm_output["artifacts"], model_dir / "lstm_preprocess.joblib")
-        prediction_output = lstm_output
-        prediction_source = "LSTM"
-        all_metrics["LSTM"] = lstm_metrics
-        all_metrics["history"] = lstm_output["history"]
-        save_json(model_dir / "history.json", lstm_output["history"])
-    except ImportError as exc:
-        lstm_error = str(exc)
-        print("Cảnh báo: Không thể huấn luyện LSTM do thư viện TensorFlow bị policy chặn.")
-        print("Dự đoán tạm thời trong web app sẽ dùng Linear Regression; bảng K-NN/Logistic vẫn được lưu.")
-
-    pd.DataFrame({
-        "date": prediction_output["dates"],
-        "actual": prediction_output["actual"],
-        "predicted": prediction_output["predicted"],
-    }).to_csv(model_dir / "predictions.csv", index=False)
-
-    all_metrics["prediction_source"] = prediction_source
-    if lstm_error:
-        all_metrics["lstm_error"] = lstm_error
-
-    save_json(model_dir / "metrics.json", all_metrics)
-    print(f"Đã train {len(data):,} dòng. Dự đoán đang dùng: {prediction_source}")
+    save_json(
+        model_dir / "metrics.json",
+        {
+            "Linear Regression": linear_metrics,
+            **linear_experiment_metrics,
+            **classifier_metrics,
+            "LSTM": lstm_metrics,
+            "rows": len(data),
+            "split": split,
+            "window": args.window,
+            "pca_components": args.pca_components,
+        },
+    )
+    save_json(model_dir / "history.json", lstm_output["history"])
+    print(f"Đã train {len(data):,} dòng. LSTM: {lstm_metrics}")
 
 
 if __name__ == "__main__":
