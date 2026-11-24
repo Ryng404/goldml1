@@ -90,12 +90,38 @@ st.download_button(
 )
 
 st.subheader("So sánh mô hình")
-score = pd.DataFrame(metrics).T.drop(
-    index=["rows", "split", "window", "pca_components"],
-    errors="ignore",
+ignored_keys = {"rows", "split", "window", "pca_components", "pcaComponents"}
+model_metrics = pd.DataFrame.from_dict(
+    {name: values for name, values in metrics.items() if name not in ignored_keys},
+    orient="index",
 )
-st.caption("MAE/RMSE/R2/MAPE dành cho mô hình giá; Accuracy/Precision/Recall/F1 dành cho K-NN và Logistic Regression.")
-st.dataframe(score.style.format("{:.6f}", na_rep="-"), use_container_width=True)
+
+classifier_names = (
+    name for name in model_metrics.index
+    if name.startswith("K-NN") or name.startswith("Logistic Regression")
+)
+classifier_names = list(classifier_names)
+regression_names = [name for name in model_metrics.index if name not in classifier_names]
+
+st.markdown("**Mô hình dự đoán giá**")
+regression_metrics = model_metrics.loc[
+    [name for name in regression_names if {"MAE", "RMSE", "R2", "MAPE"}.intersection(model_metrics.loc[name].dropna().index)],
+    ["MAE", "RMSE", "R2", "MAPE"],
+]
+if regression_metrics.empty:
+    st.info("Chưa có kết quả mô hình dự đoán giá.")
+else:
+    st.dataframe(regression_metrics.style.format("{:.6f}", na_rep="-"), use_container_width=True)
+
+st.markdown("**Mô hình phân loại xu hướng**")
+if classifier_names:
+    classifier_metrics = model_metrics.loc[
+        classifier_names,
+        ["Accuracy", "Precision", "Recall", "F1"],
+    ]
+    st.dataframe(classifier_metrics.style.format("{:.6f}", na_rep="-"), use_container_width=True)
+else:
+    st.info("Chưa có kết quả K-NN/Logistic Regression. Hãy huấn luyện lại bằng `python train.py`.")
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=pred["date"], y=pred["actual"], name="Giá thật", line={"color": "#111827"}))
