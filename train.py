@@ -5,11 +5,11 @@ import joblib
 import pandas as pd
 
 from pipeline import (
+    build_pca_report,
     clean_data,
     load_gold_csv,
     make_features,
     save_json,
-    train_direction_classifiers,
     train_linear,
     train_lstm,
 )
@@ -26,7 +26,7 @@ def main():
         nargs="+",
         type=int,
         default=[12, 6, 3, 1],
-        help="Các số chiều PCA cần thử cho Random Forest.",
+        help="Các số chiều PCA cần thử cho Linear Regression.",
     )
     args = parser.parse_args()
 
@@ -52,11 +52,7 @@ def main():
         )
         linear_experiment_metrics[f"Linear Regression (PCA={components})"] = variant_metrics
         linear_experiment_artifacts[f"PCA={components}"] = variant_output["artifacts"]
-    classifier_metrics, classifier_artifacts, pca_report = train_direction_classifiers(
-        data,
-        split,
-        args.pca_components,
-    )
+    pca_report = build_pca_report(data, split, args.pca_components)
 
     joblib.dump(
         {
@@ -65,14 +61,12 @@ def main():
         },
         model_dir / "linear.joblib",
     )
-    joblib.dump(classifier_artifacts, model_dir / "classifiers.joblib")
     report.to_csv(model_dir / "cleaning_report.csv", index=False)
     data.to_csv(model_dir / "features.csv", index=False)
 
     all_metrics = {
         "Linear Regression": linear_metrics,
         **linear_experiment_metrics,
-        **classifier_metrics,
         "rows": len(data),
         "split": split,
         "window": args.window,
