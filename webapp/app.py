@@ -74,7 +74,7 @@ pred_path = MODEL_DIR / "predictions.csv"
 
 st.markdown(
     '<div class="hero"><h1>GoldML Analytics</h1>'
-    '<p>Phân tích dự đoán giá vàng bằng Linear Regression, LSTM và PCA.</p></div>',
+    '<p>Phân tích dự đoán giá vàng bằng Linear Regression, LSTM và K-NN với PCA.</p></div>',
     unsafe_allow_html=True,
 )
 
@@ -105,7 +105,7 @@ with st.sidebar:
         st.warning("TensorFlow đang bị Windows chặn.")
 
 overview_tab, compare_tab, pca_tab = st.tabs(
-    ["Tổng quan", "So sánh mô hình", "Phân tích PCA"]
+    ["Tổng quan", "So sánh mô hình", "K-NN và PCA"]
 )
 
 with overview_tab:
@@ -190,7 +190,7 @@ with compare_tab:
             for name, values in metrics.items()
             if name not in ignored_keys
             and (
-                name.startswith("Linear Regression")
+                name == "Linear Regression"
                 or name == "LSTM"
             )
         },
@@ -217,7 +217,7 @@ with compare_tab:
         chart.add_trace(go.Bar(
             x=comparison.index,
             y=comparison["RMSE"],
-            marker={"color": ["#facc15" if "PCA=12" in name else "#38bdf8" for name in comparison.index]},
+            marker={"color": "#38bdf8"},
             text=comparison["RMSE"].round(4),
             textposition="outside",
         ))
@@ -235,8 +235,26 @@ with compare_tab:
         st.info("Chưa có metric mô hình.")
 
 with pca_tab:
+    st.markdown("#### K-NN với PCA")
+    st.caption("PCA được áp dụng cho K-NN; Linear Regression dùng 22 đặc trưng gốc.")
+    knn_metrics = {
+        name: values
+        for name, values in metrics.items()
+        if name.startswith("K-NN")
+    }
+    if knn_metrics:
+        knn_table = pd.DataFrame.from_dict(knn_metrics, orient="index")
+        knn_columns = [
+            column
+            for column in ["Accuracy", "Precision", "Recall", "F1"]
+            if column in knn_table.columns
+        ]
+        st.dataframe(
+            knn_table[knn_columns].style.format("{:.6f}", na_rep="-"),
+            use_container_width=True,
+        )
+
     st.markdown("#### Giảm chiều đặc trưng")
-    st.caption("PCA biến 22 đặc trưng kỹ thuật thành 12, 6, 3 hoặc 1 thành phần.")
     pca_report = metrics.get("pca_report", {})
     if pca_report:
         pca_order = [

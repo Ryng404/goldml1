@@ -10,7 +10,16 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_score,
+    recall_score,
+    r2_score,
+)
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 
 FEATURES = [
@@ -135,15 +144,70 @@ def train_linear(data: pd.DataFrame, split: int, pca_components: int = 0) -> tup
     scaler = StandardScaler()
     x_train = scaler.fit_transform(data.loc[:split - 1, FEATURES])
     x_test = scaler.transform(data.loc[split:, FEATURES])
-    reducer = PCA(n_components=pca_components, random_state=42) if pca_components else None
-    if reducer:
-        x_train, x_test = reducer.fit_transform(x_train), reducer.transform(x_test)
     model = LinearRegression().fit(x_train, data.loc[:split - 1, "target_return"])
     base = data.loc[split:, "close"].to_numpy()
     actual = data.loc[split:, "close"].to_numpy() * (1 + data.loc[split:, "target_return"].to_numpy())
     predicted = base * (1 + model.predict(x_test))
-    artifacts = {"scaler": scaler, "pca": reducer, "model": model}
+    artifacts = {"scaler": scaler, "pca": None, "model": model}
     return model, metrics(actual, predicted), {"actual": actual, "predicted": predicted, "dates": data.loc[split:, "date"].astype(str).to_numpy(), "artifacts": artifacts}
+
+
+def train_knn(
+    data: pd.DataFrame,
+    split: int,
+    pca_components: Iterable[int] = (12, 6, 3, 1),
+) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict]]:
+    y = (data["target_return"] > 0).astype(int)
+    x_train_full = data.loc[:split - 1, FEATURES]
+    x_test_full = data.loc[split:, FEATURES]
+    y_train = y.loc[:split - 1]
+    y_test = y.loc[split:]
+    all_metrics: dict[str, dict] = {}
+    all_artifacts: dict[str, dict] = {}
+    pca_report: dict[str, dict] = {
+        "22 đặc trưng gốc": {
+            "Số đặc trưng": len(FEATURES),
+            "Tỷ lệ phương sai PCA": 100.0,
+        },
+    }
+
+    scaler = StandardScaler()
+    x_train = scaler.fit_transform(x_train_full)
+    x_test = scaler.transform(x_test_full)
+
+    for components in dict.fromkeys(int(value) for value in pca_components):
+        if components <= 0:
+            raise ValueError("PCA phải dùng số thành phần dương: 12, 6, 3 hoặc 1.")
+        if components > len(FEATURES):
+            raise ValueError(
+                f"PCA={components} vượt quá số đặc trưng hiện có ({len(FEATURES)})."
+            )
+        reducer = PCA(n_components=components, random_state=42)
+        train_reduced = reducer.fit_transform(x_train)
+        test_reduced = reducer.transform(x_test)
+
+        model = KNeighborsClassifier(n_neighbors=5)
+        model.fit(train_reduced, y_train)
+        predicted = model.predict(test_reduced)
+        key = f"K-NN (PCA={components})"
+        all_metrics[key] = {
+            "Accuracy": float(accuracy_score(y_test, predicted)),
+            "Precision": float(precision_score(y_test, predicted, zero_division=0)),
+            "Recall": float(recall_score(y_test, predicted, zero_division=0)),
+            "F1": float(f1_score(y_test, predicted, zero_division=0)),
+        }
+        all_artifacts[key] = {
+            "scaler": scaler,
+            "pca": reducer,
+            "model": model,
+            "pca_components": components,
+        }
+        pca_report[f"PCA {components}"] = {
+            "Số đặc trưng": components,
+            "Tỷ lệ phương sai PCA": float(reducer.explained_variance_ratio_.sum() * 100),
+        }
+
+    return all_metrics, all_artifacts, pca_report
 
 
 def build_pca_report(
