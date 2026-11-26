@@ -7,9 +7,16 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_DIR = ROOT / "models"
+MODEL_VARIANTS = [
+    ("LSTM (22 features)", "lstm"),
+    ("LSTM + PCA 12 components", "lstm_pca12"),
+    ("LSTM + PCA 6 components", "lstm_pca6"),
+    ("LSTM + PCA 3 components", "lstm_pca3"),
+    ("LSTM + PCA 1 component", "lstm_pca1"),
+]
 
 st.set_page_config(
-    page_title="GoldML Analytics",
+    page_title="GoldML | Gold Market",
     page_icon="Au",
     layout="wide",
 )
@@ -17,52 +24,50 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .stApp {
-        background: radial-gradient(circle at top right, #172554 0, #0f172a 38%, #020617 100%);
-        color: #e5e7eb;
+    :root {
+        --bg: #080d16;
+        --panel: #101927;
+        --line: #202c3b;
+        --muted: #91a0b5;
+        --text: #e7edf5;
+        --gold: #f0b90b;
+        --green: #0ecb81;
+        --red: #f6465d;
     }
+    .stApp { background: var(--bg); color: var(--text); }
     [data-testid="stHeader"] { background: transparent; }
-    [data-testid="stToolbar"] { right: 1rem; }
-    [data-testid="stSidebar"] { background: #111827; border-right: 1px solid #1f2937; }
-    [data-testid="stMetric"], [data-testid="stMetricLabel"], [data-testid="stMetricValue"] {
-        color: #f8fafc;
+    [data-testid="stSidebar"] {
+        background: #0c1420;
+        border-right: 1px solid var(--line);
     }
+    .block-container { max-width: 1500px; padding-top: 1.1rem; padding-bottom: 3rem; }
+    .market-header {
+        display: flex; justify-content: space-between; align-items: center;
+        border-bottom: 1px solid var(--line); padding: 4px 0 18px; margin-bottom: 22px;
+    }
+    .brand { color: var(--gold); font-weight: 800; font-size: 1.1rem; letter-spacing: .04em; }
+    .market-tag { color: var(--muted); font-size: .82rem; }
+    .symbol { font-size: 1.6rem; font-weight: 750; margin: 0; color: var(--text); }
+    .sub-symbol { color: var(--muted); font-size: .9rem; }
+    .quote {
+        border: 1px solid var(--line); background: linear-gradient(120deg, #121d2b, #0d1521);
+        border-radius: 12px; padding: 17px 20px; margin: 12px 0 18px;
+    }
+    .quote-label { color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
+    .quote-value { font-size: 2rem; font-weight: 750; line-height: 1.25; color: var(--text); }
+    .quote-note { color: var(--muted); font-size: .82rem; }
     [data-testid="stMetric"] {
-        background: linear-gradient(145deg, rgba(30,41,59,.96), rgba(15,23,42,.96));
-        border: 1px solid rgba(148,163,184,.14);
-        border-radius: 18px;
-        padding: 18px 20px;
-        box-shadow: 0 12px 32px rgba(0,0,0,.18);
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 10px; padding: 13px 15px;
     }
-    [data-testid="stDataFrame"] {
-        border: 1px solid rgba(148,163,184,.12);
-        border-radius: 14px;
-        overflow: hidden;
-    }
-    .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1380px; }
-    .hero {
-        border: 1px solid rgba(250,204,21,.18);
-        background: linear-gradient(135deg, rgba(250,204,21,.10), rgba(30,41,59,.82));
-        border-radius: 22px;
-        padding: 24px 28px;
-        margin-bottom: 20px;
-    }
-    .hero h1 { color: #f8fafc; font-size: 2rem; margin: 0 0 6px 0; }
-    .hero p { color: #94a3b8; margin: 0; }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background: transparent;
-        border-bottom: 1px solid rgba(148,163,184,.12);
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 44px;
-        border-radius: 10px 10px 0 0;
-        color: #94a3b8;
-        padding: 0 18px;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #facc15;
-        border-bottom: 2px solid #facc15;
+    [data-testid="stMetricLabel"] { color: var(--muted); }
+    [data-testid="stMetricValue"] { color: var(--text); font-size: 1.25rem; }
+    [data-testid="stDataFrame"] { border: 1px solid var(--line); border-radius: 9px; }
+    h1, h2, h3 { color: var(--text); }
+    div[data-baseweb="select"] > div { background: var(--panel); border-color: var(--line); }
+    .section-label {
+        color: var(--text); font-size: 1.05rem; font-weight: 650;
+        margin: 1.1rem 0 .4rem;
     }
     </style>
     """,
@@ -70,235 +75,203 @@ st.markdown(
 )
 
 metrics_path = MODEL_DIR / "metrics.json"
-pred_path = MODEL_DIR / "predictions.csv"
-
-st.markdown(
-    '<div class="hero"><h1>GoldML Analytics</h1>'
-    '<p>Phân tích dự đoán giá vàng bằng Linear Regression, LSTM và K-NN với PCA.</p></div>',
-    unsafe_allow_html=True,
-)
-
-if not metrics_path.exists() or not pred_path.exists():
+if not metrics_path.exists():
     st.warning(
-        "Chưa có model. Chạy `python train.py --csv <file-kaggle.csv> --max-rows 100000` "
-        "rồi khởi động lại giao diện."
+        "Chưa có kết quả huấn luyện. Chạy `python train.py --csv <file-kaggle.csv>` "
+        "để tạo các cấu hình LSTM và dữ liệu hiển thị."
     )
     st.stop()
 
 metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-prediction_source = metrics.get("prediction_source", "LSTM")
-pred = pd.read_csv(pred_path, parse_dates=["date"])
-pred = pred.dropna(subset=["date", "actual", "predicted"]).sort_values("date").reset_index(drop=True)
+available_models = []
+for label, model_name in MODEL_VARIANTS:
+    pred_path = MODEL_DIR / f"{model_name}_predictions.csv"
+    if label in metrics and pred_path.exists():
+        available_models.append((label, model_name, pred_path))
 
-if pred.empty:
-    st.error("File predictions.csv không có dữ liệu hợp lệ.")
+# Read older training output as the uncompressed LSTM variant.
+legacy_lstm_path = MODEL_DIR / "predictions.csv"
+if not any(model_name == "lstm" for _, model_name, _ in available_models):
+    if "LSTM" in metrics and legacy_lstm_path.exists():
+        available_models.insert(0, (MODEL_VARIANTS[0][0], "lstm", legacy_lstm_path))
+    elif metrics.get("prediction_source") == "LSTM" and legacy_lstm_path.exists():
+        available_models.insert(0, (MODEL_VARIANTS[0][0], "lstm", legacy_lstm_path))
+
+if not available_models:
+    if metrics.get("lstm_error"):
+        st.error(f"Không có mô hình LSTM để hiển thị. Chi tiết: {metrics['lstm_error']}")
+    else:
+        st.warning("Chưa tìm thấy kết quả LSTM. Hãy huấn luyện lại để tạo đủ các biến thể PCA.")
     st.stop()
 
 with st.sidebar:
-    st.markdown("### GoldML")
-    st.caption("Dự đoán giá vàng")
+    st.markdown("## GoldML")
+    st.caption("GOLD MARKET · MODEL TERMINAL")
     st.divider()
-    st.metric("Dòng dữ liệu", f"{metrics.get('rows', 0):,}")
-    st.metric("Cửa sổ LSTM", f"{metrics.get('window', '-')}")
-    st.metric("Mô hình dự đoán", prediction_source)
-    if metrics.get("lstm_error"):
-        st.warning("TensorFlow đang bị Windows chặn.")
+    st.markdown("**Chọn mô hình dự đoán**")
+    selected_label = st.selectbox(
+        "Cấu hình",
+        [model[0] for model in available_models],
+        label_visibility="collapsed",
+    )
+    selected_model = next(model for model in available_models if model[0] == selected_label)
+    st.divider()
+    st.metric("Bản ghi đã xử lý", f"{metrics.get('rows', 0):,}")
+    st.metric("Cửa sổ quan sát", f"{metrics.get('window', 60)} phiên")
+    st.caption("Các chỉ số được tính trên tập kiểm tra theo thứ tự thời gian.")
 
-overview_tab, compare_tab, pca_tab = st.tabs(
-    ["Tổng quan", "So sánh mô hình", "K-NN và PCA"]
+selected_label, selected_model_name, selected_path = selected_model
+pred = pd.read_csv(selected_path, parse_dates=["date"])
+pred["actual"] = pd.to_numeric(pred["actual"], errors="coerce")
+pred["predicted"] = pd.to_numeric(pred["predicted"], errors="coerce")
+pred = (
+    pred.dropna(subset=["date", "actual", "predicted"])
+    .sort_values("date")
+    .reset_index(drop=True)
+)
+if pred.empty:
+    st.error(f"Không có dự đoán hợp lệ trong {selected_path.name}.")
+    st.stop()
+
+last = pred.iloc[-1]
+previous = pred.iloc[-2] if len(pred) > 1 else last
+change = float(last["actual"] - previous["actual"])
+change_pct = change / max(abs(float(previous["actual"])), 1e-8) * 100
+selected_metrics = metrics.get(selected_label, metrics.get("LSTM", {}))
+error = float(last["predicted"] - last["actual"])
+error_pct = abs(error) / max(abs(float(last["actual"])), 1e-8) * 100
+
+st.markdown(
+    """
+    <div class="market-header">
+      <div class="brand">GOLDML <span class="market-tag">/ MARKET ANALYTICS</span></div>
+      <div class="market-tag">MACHINE LEARNING · TIME SERIES</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
-with overview_tab:
-    date_min = pred["date"].min().date()
-    date_max = pred["date"].max().date()
-    selected_date = st.date_input(
-        "Thời điểm kiểm tra",
-        value=date_max,
-        min_value=date_min,
-        max_value=date_max,
+head_left, head_right = st.columns([3, 1])
+with head_left:
+    st.markdown('<p class="symbol">XAU · GOLD</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<span class="sub-symbol">Giá đóng cửa kiểm tra · '
+        f'Cấu hình đang xem: {selected_label}</span>',
+        unsafe_allow_html=True,
     )
-    same_day = pred[pred["date"].dt.date == selected_date]
-
-    if same_day.empty:
-        nearest_index = pred["date"].dt.date.map(
-            lambda value: abs(value - selected_date)
-        ).idxmin()
-        selected_row = pred.loc[[nearest_index]]
-        st.caption(f"Hiển thị phiên gần {selected_date:%d/%m/%Y} nhất.")
-    else:
-        selected_row = same_day.tail(1)
-
-    row = selected_row.iloc[0]
-    error = float(row["predicted"] - row["actual"])
-    error_pct = abs(error) / max(abs(float(row["actual"])), 1e-8) * 100
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Giá thực", f"{row['actual']:,.2f}")
-    m2.metric("Giá dự đoán", f"{row['predicted']:,.2f}")
-    m3.metric("Chênh lệch", f"{error:+,.2f}")
-    m4.metric("Sai số tương đối", f"{error_pct:.3f}%")
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=pred["date"],
-        y=pred["actual"],
-        name="Giá thực",
-        line={"color": "#94a3b8", "width": 1.8},
-    ))
-    fig.add_trace(go.Scatter(
-        x=pred["date"],
-        y=pred["predicted"],
-        name=prediction_source,
-        line={"color": "#facc15", "width": 2.2},
-    ))
-    fig.add_trace(go.Scatter(
-        x=[row["date"]],
-        y=[row["predicted"]],
-        name="Thời điểm chọn",
-        mode="markers",
-        marker={"color": "#fb7185", "size": 12, "line": {"color": "#fff", "width": 1}},
-    ))
-    fig.update_layout(
-        template="plotly_dark",
-        height=470,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin={"l": 20, "r": 20, "t": 20, "b": 20},
-        hovermode="x unified",
-        legend={"orientation": "h", "y": 1.02},
-        xaxis={"title": "Thời gian", "rangeslider": {"visible": False}},
-        yaxis={"title": "Giá đóng cửa"},
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.download_button(
-        "Tải kết quả thời điểm đã chọn",
-        data=selected_row.to_csv(index=False).encode("utf-8"),
-        file_name=f"gold_prediction_{row['date']:%Y%m%d_%H%M}.csv",
-        mime="text/csv",
-        use_container_width=True,
+with head_right:
+    st.markdown(
+        '<div style="text-align:right;color:#91a0b5;padding-top:10px">'
+        f'TẬP KIỂM TRA<br><b style="color:#e7edf5">{len(pred):,} phiên</b></div>',
+        unsafe_allow_html=True,
     )
 
-with compare_tab:
-    ignored_keys = {
-        "rows", "split", "window", "pca_components", "pca_report",
-        "prediction_source", "lstm_error", "history",
-    }
-    model_metrics = pd.DataFrame.from_dict(
+st.markdown(
+    f'<div class="quote"><div class="quote-label">Giá thực gần nhất trong tập kiểm tra</div>'
+    f'<div class="quote-value">{last["actual"]:,.2f}</div>'
+    f'<div class="quote-note">{last["date"]:%d/%m/%Y} · '
+    f'<span style="color:{"#0ecb81" if change >= 0 else "#f6465d"}">'
+    f'{change:+,.2f} ({change_pct:+.3f}%)</span> so với phiên kiểm tra trước</div></div>',
+    unsafe_allow_html=True,
+)
+
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Giá dự đoán", f'{last["predicted"]:,.2f}')
+k2.metric("Sai lệch gần nhất", f"{error:+,.2f}")
+k3.metric("Sai số tương đối", f"{error_pct:.3f}%")
+k4.metric("RMSE tập kiểm tra", f'{selected_metrics.get("RMSE", float("nan")):,.4f}')
+
+chart_controls, _ = st.columns([1, 3])
+with chart_controls:
+    chart_range = st.selectbox(
+        "Khoảng thời gian",
+        ["Toàn bộ", "1 tháng", "3 tháng", "6 tháng", "1 năm"],
+        label_visibility="collapsed",
+    )
+range_days = {"1 tháng": 30, "3 tháng": 90, "6 tháng": 180, "1 năm": 365}
+chart_data = pred
+if chart_range in range_days:
+    cutoff = pred["date"].max() - pd.Timedelta(days=range_days[chart_range])
+    chart_data = pred[pred["date"] >= cutoff]
+
+fig = go.Figure()
+fig.add_trace(
+    go.Scatter(
+        x=chart_data["date"],
+        y=chart_data["actual"],
+        name="Giá thực tế",
+        mode="lines",
+        line={"color": "#91a0b5", "width": 1.8},
+    )
+)
+fig.add_trace(
+    go.Scatter(
+        x=chart_data["date"],
+        y=chart_data["predicted"],
+        name="Giá dự đoán",
+        mode="lines",
+        line={"color": "#f0b90b", "width": 2},
+        fill="tozeroy",
+        fillcolor="rgba(240,185,11,.06)",
+    )
+)
+fig.update_layout(
+    template="plotly_dark",
+    height=470,
+    paper_bgcolor="#080d16",
+    plot_bgcolor="#080d16",
+    margin={"l": 8, "r": 16, "t": 24, "b": 8},
+    hovermode="x unified",
+    legend={"orientation": "h", "y": 1.08, "x": 0},
+    xaxis={"title": "", "showgrid": False, "rangeslider": {"visible": False}},
+    yaxis={"title": "Giá đóng cửa", "gridcolor": "#202c3b"},
+)
+st.plotly_chart(fig, use_container_width=True)
+
+st.markdown('<div class="section-label">Hiệu suất các cấu hình LSTM</div>', unsafe_allow_html=True)
+comparison_rows = []
+for label, model_name, _ in available_models:
+    row_metrics = metrics.get(label, {})
+    comparison_rows.append(
         {
-            name: values
-            for name, values in metrics.items()
-            if name not in ignored_keys
-            and (
-                name == "Linear Regression"
-                or name == "LSTM"
-            )
-        },
-        orient="index",
+            "Mô hình": label,
+            "Số chiều đầu vào": 22 if model_name == "lstm" else int(model_name.removeprefix("lstm_pca")),
+            "MAE": row_metrics.get("MAE"),
+            "RMSE": row_metrics.get("RMSE"),
+            "R²": row_metrics.get("R2"),
+            "MAPE (%)": row_metrics.get("MAPE"),
+            "Đang xem": "✓" if label == selected_label else "",
+        }
     )
-    metric_columns = [
-        column
-        for column in ["MAE", "RMSE", "R2", "MAPE"]
-        if column in model_metrics.columns
-    ]
-    if not model_metrics.empty and metric_columns:
-        comparison = model_metrics.loc[
-            model_metrics[metric_columns].notna().any(axis=1),
-            metric_columns,
-        ]
-        st.markdown("#### Hiệu suất mô hình")
-        st.caption("MAE, RMSE và MAPE càng thấp càng tốt; R2 càng gần 1 càng tốt.")
-        st.dataframe(
-            comparison.sort_values("RMSE").style.format("{:.6f}", na_rep="-"),
-            use_container_width=True,
-        )
+comparison = pd.DataFrame(comparison_rows)
+st.dataframe(
+    comparison.style.format(
+        {"MAE": "{:.5f}", "RMSE": "{:.5f}", "R²": "{:.5f}", "MAPE (%)": "{:.3f}"},
+        na_rep="—",
+    ),
+    use_container_width=True,
+    hide_index=True,
+)
+st.caption("Giá thực và giá dự đoán được lưu theo từng phiên trong tập kiểm tra; đây không phải dữ liệu giá trực tiếp.")
 
-        chart = go.Figure()
-        chart.add_trace(go.Bar(
-            x=comparison.index,
-            y=comparison["RMSE"],
-            marker={"color": "#38bdf8"},
-            text=comparison["RMSE"].round(4),
-            textposition="outside",
-        ))
-        chart.update_layout(
-            template="plotly_dark",
-            height=390,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            margin={"l": 20, "r": 20, "t": 20, "b": 20},
-            xaxis={"title": ""},
-            yaxis={"title": "RMSE"},
-        )
-        st.plotly_chart(chart, use_container_width=True)
-    else:
-        st.info("Chưa có metric mô hình.")
-
-with pca_tab:
-    st.markdown("#### K-NN với PCA")
-    st.caption("PCA được áp dụng cho K-NN; Linear Regression dùng 22 đặc trưng gốc.")
-    knn_metrics = {
-        name: values
-        for name, values in metrics.items()
-        if name.startswith("K-NN")
-    }
-    if knn_metrics:
-        knn_table = pd.DataFrame.from_dict(knn_metrics, orient="index")
-        knn_columns = [
-            column
-            for column in ["Accuracy", "Precision", "Recall", "F1"]
-            if column in knn_table.columns
-        ]
-        st.dataframe(
-            knn_table[knn_columns].style.format("{:.6f}", na_rep="-"),
-            use_container_width=True,
-        )
-
-    st.markdown("#### Giảm chiều đặc trưng")
-    pca_report = metrics.get("pca_report", {})
-    if pca_report:
-        pca_order = [
-            "22 đặc trưng gốc",
-            "PCA 12",
-            "PCA 6",
-            "PCA 3",
-            "PCA 1",
-        ]
-        pca_order = [label for label in pca_order if label in pca_report]
-        pca_table = pd.DataFrame(pca_report).T
-        st.dataframe(
-            pca_table.style.format({"Tỷ lệ phương sai PCA": "{:.2f}%"}),
-            use_container_width=True,
-        )
-
-        dimensions = [pca_report[label]["Số đặc trưng"] for label in pca_order]
-        variance = [pca_report[label]["Tỷ lệ phương sai PCA"] for label in pca_order]
-        pca_fig = go.Figure()
-        pca_fig.add_trace(go.Scatter(
-            x=dimensions,
-            y=variance,
-            mode="lines+markers+text",
-            text=pca_order,
-            textposition="top center",
-            line={"color": "#facc15", "width": 3},
-            marker={"color": "#38bdf8", "size": 10},
-        ))
-        pca_fig.update_layout(
-            template="plotly_dark",
-            height=410,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            margin={"l": 20, "r": 20, "t": 30, "b": 20},
-            xaxis={"title": "Số chiều", "autorange": "reversed"},
-            yaxis={"title": "Phương sai giữ lại (%)", "range": [0, 105]},
-        )
-        st.plotly_chart(pca_fig, use_container_width=True)
-    else:
-        st.info("Chưa có báo cáo PCA. Hãy chạy lại training.")
-
-with st.expander("Xem 100 kết quả gần nhất"):
-    st.dataframe(
-        pred.tail(100).sort_values("date", ascending=False),
-        use_container_width=True,
-        hide_index=True,
+with st.expander("Xem dữ liệu dự đoán gần nhất"):
+    recent = pred.tail(100).sort_values("date", ascending=False).copy()
+    recent["Sai lệch"] = recent["predicted"] - recent["actual"]
+    st.dataframe(recent, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Tải CSV cấu hình đang xem",
+        data=pred.to_csv(index=False).encode("utf-8"),
+        file_name=f"{selected_model_name}_predictions.csv",
+        mime="text/csv",
     )
+
+knn_metrics = {
+    name: values for name, values in metrics.items()
+    if name.startswith("K-NN")
+}
+if knn_metrics:
+    with st.expander("K-NN phân loại xu hướng (22 đặc trưng, không PCA)"):
+        st.dataframe(
+            pd.DataFrame.from_dict(knn_metrics, orient="index"),
+            use_container_width=True,
+        )

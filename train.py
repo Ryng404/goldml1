@@ -26,7 +26,7 @@ def main():
         nargs="+",
         type=int,
         default=[12, 6, 3, 1],
-        help="Các số chiều PCA cần thử cho K-NN.",
+        help="Các số thành phần PCA cần thử cho LSTM.",
     )
     args = parser.parse_args()
 
@@ -41,11 +41,7 @@ def main():
         raise ValueError("Không đủ dữ liệu sau làm sạch để chia train/test.")
 
     _, linear_metrics, linear_output = train_linear(data, split)
-    knn_metrics, knn_artifacts, pca_report = train_knn(
-        data,
-        split,
-        args.pca_components,
-    )
+    knn_metrics, knn_artifacts = train_knn(data, split)
 
     joblib.dump(
         {"default": linear_output["artifacts"]},
@@ -62,24 +58,46 @@ def main():
         "split": split,
         "window": args.window,
         "pca_components": args.pca_components,
-        "pca_report": pca_report,
     }
 
     prediction_output = linear_output
-    prediction_source = "Linear Regression"
+    prediction_source = "LSTM (22 features)"
     lstm_error = None
     try:
-        lstm, lstm_metrics, lstm_output = train_lstm(data, split, args.window, args.epochs)
-        joblib.dump(lstm_output["artifacts"], model_dir / "lstm_preprocess.joblib")
-        lstm.save(model_dir / "lstm.keras")
-        prediction_output = lstm_output
-        prediction_source = "LSTM"
-        all_metrics["LSTM"] = lstm_metrics
-        all_metrics["history"] = lstm_output["history"]
-        save_json(model_dir / "history.json", lstm_output["history"])
+        variants = [(None, "LSTM (22 features)", "lstm")]
+        variants.extend(
+            (components, f"LSTM + PCA {components} components", f"lstm_pca{components}")
+            for components in dict.fromkeys(args.pca_components)
+        )
+        for components, label, model_name in variants:
+            lstm, lstm_metrics, lstm_output = train_lstm(
+                data,
+                split,
+                args.window,
+                args.epochs,
+                pca_components=components,
+            )
+            joblib.dump(
+                lstm_output["artifacts"],
+                model_dir / f"{model_name}_preprocess.joblib",
+            )
+            lstm.save(model_dir / f"{model_name}.keras")
+            pd.DataFrame(
+                {
+                    "date": lstm_output["dates"],
+                    "actual": lstm_output["actual"],
+                    "predicted": lstm_output["predicted"],
+                }
+            ).to_csv(model_dir / f"{model_name}_predictions.csv", index=False)
+            all_metrics[label] = lstm_metrics
+            all_metrics[f"{model_name}_history"] = lstm_output["history"]
+            if components is None:
+                prediction_output = lstm_output
+                save_json(model_dir / "history.json", lstm_output["history"])
     except ImportError as exc:
         lstm_error = str(exc)
-        print("Cảnh báo: Không thể huấn luyện LSTM vì TensorFlow bị Application Control chặn.")
+        prediction_source = "Linear Regression"
+        print(f"Cảnh báo: Không thể huấn luyện LSTM: {exc}")
         print("Đang lưu dự đoán tạm bằng Linear Regression.")
 
     pd.DataFrame(

@@ -1,10 +1,10 @@
 # GoldML - Dự đoán giá vàng với LSTM và mô hình so sánh
 
-Dự án gồm pipeline huấn luyện và sản phẩm web Streamlit. Pipeline gồm:
+Dự án gồm pipeline huấn luyện và dashboard Streamlit theo dõi kết quả dự đoán. Pipeline gồm:
 
-- **Hồi quy tuyến tính**: baseline dễ giải thích, có thể bật PCA để giảm chiều dữ liệu.
-- **K-NN** và **Logistic Regression**: mô hình phân loại xu hướng tăng/giảm, thử riêng với PCA 12, 6, 3 và 1 thành phần.
-- **LSTM**: mô hình chính, học chuỗi 60 phiên gần nhất và dự đoán phần trăm thay đổi của phiên kế tiếp.
+- **Hồi quy tuyến tính**: baseline hồi quy trên 22 đặc trưng.
+- **K-NN**: phân loại xu hướng tăng/giảm trên 22 đặc trưng, không dùng PCA.
+- **LSTM**: mô hình chuỗi chính, học 60 phiên gần nhất và dự đoán phần trăm thay đổi của phiên kế tiếp. Huấn luyện 5 cấu hình để so sánh: 22 đặc trưng gốc và PCA 12, 6, 3 hoặc 1 thành phần.
 
 Pipeline mặc định dùng tối đa **100.000 dòng mới nhất** từ CSV Kaggle. Cách xử lý dữ liệu gồm chuẩn hóa tên cột, parse thời gian, loại dòng lỗi/trùng, kiểm tra OHLC, loại outlier bằng ngưỡng IQR trên log-return và tạo đặc trưng kỹ thuật không nhìn trước tương lai.
 
@@ -19,7 +19,7 @@ python train.py --csv /path/to/gold.csv --max-rows 100000
 streamlit run webapp/app.py
 ```
 
-Sau khi train, các file trong `models/` được web app tự động đọc. Mặc định thử PCA 12, 6, 3 và 1:
+Sau khi train, dashboard tự động đọc các kết quả trong `models/`. Ở thanh bên, chọn một trong các cấu hình LSTM để xem biểu đồ và chỉ số tương ứng. Mặc định chạy LSTM với PCA 12, 6, 3 và 1 thành phần:
 
 ```bash
 python train.py --csv /path/to/gold.csv --pca-components 12 6 3 1
