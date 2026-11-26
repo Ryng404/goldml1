@@ -155,95 +155,51 @@ def train_linear(data: pd.DataFrame, split: int, pca_components: int = 0) -> tup
 def train_knn(
     data: pd.DataFrame,
     split: int,
-    pca_components: Iterable[int] = (12, 6, 3, 1),
-) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict]]:
+) -> tuple[dict[str, dict], dict[str, dict]]:
     y = (data["target_return"] > 0).astype(int)
     x_train_full = data.loc[:split - 1, FEATURES]
     x_test_full = data.loc[split:, FEATURES]
     y_train = y.loc[:split - 1]
     y_test = y.loc[split:]
-    all_metrics: dict[str, dict] = {}
-    all_artifacts: dict[str, dict] = {}
-    pca_report: dict[str, dict] = {
-        "22 đặc trưng gốc": {
-            "Số đặc trưng": len(FEATURES),
-            "Tỷ lệ phương sai PCA": 100.0,
-        },
-    }
-
     scaler = StandardScaler()
     x_train = scaler.fit_transform(x_train_full)
     x_test = scaler.transform(x_test_full)
-
-    for components in dict.fromkeys(int(value) for value in pca_components):
-        if components <= 0:
-            raise ValueError("PCA phải dùng số thành phần dương: 12, 6, 3 hoặc 1.")
-        if components > len(FEATURES):
-            raise ValueError(
-                f"PCA={components} vượt quá số đặc trưng hiện có ({len(FEATURES)})."
-            )
-        reducer = PCA(n_components=components, random_state=42)
-        train_reduced = reducer.fit_transform(x_train)
-        test_reduced = reducer.transform(x_test)
-
-        model = KNeighborsClassifier(n_neighbors=5)
-        model.fit(train_reduced, y_train)
-        predicted = model.predict(test_reduced)
-        key = f"K-NN (PCA={components})"
-        all_metrics[key] = {
-            "Accuracy": float(accuracy_score(y_test, predicted)),
-            "Precision": float(precision_score(y_test, predicted, zero_division=0)),
-            "Recall": float(recall_score(y_test, predicted, zero_division=0)),
-            "F1": float(f1_score(y_test, predicted, zero_division=0)),
-        }
-        all_artifacts[key] = {
-            "scaler": scaler,
-            "pca": reducer,
-            "model": model,
-            "pca_components": components,
-        }
-        pca_report[f"PCA {components}"] = {
-            "Số đặc trưng": components,
-            "Tỷ lệ phương sai PCA": float(reducer.explained_variance_ratio_.sum() * 100),
-        }
-
-    return all_metrics, all_artifacts, pca_report
-
-
-def build_pca_report(
-    data: pd.DataFrame,
-    split: int,
-    pca_components: Iterable[int] = (12, 6, 3, 1),
-) -> dict[str, dict]:
-    pca_report = {
-        "22 đặc trưng gốc": {
-            "Số đặc trưng": len(FEATURES),
-            "Tỷ lệ phương sai PCA": 100.0,
+    model = KNeighborsClassifier(n_neighbors=5)
+    model.fit(x_train, y_train)
+    predicted = model.predict(x_test)
+    key = "K-NN (22 features)"
+    return (
+        {
+            key: {
+                "Accuracy": float(accuracy_score(y_test, predicted)),
+                "Precision": float(precision_score(y_test, predicted, zero_division=0)),
+                "Recall": float(recall_score(y_test, predicted, zero_division=0)),
+                "F1": float(f1_score(y_test, predicted, zero_division=0)),
+            },
         },
-    }
-    scaler = StandardScaler()
-    x_train = scaler.fit_transform(data.loc[:split - 1, FEATURES])
-
-    for components in dict.fromkeys(int(value) for value in pca_components):
-        if components <= 0:
-            raise ValueError("PCA phải dùng số thành phần dương: 12, 6, 3 hoặc 1.")
-        if components > len(FEATURES):
-            raise ValueError(
-                f"PCA={components} vượt quá số đặc trưng hiện có ({len(FEATURES)})."
-            )
-        reducer = PCA(n_components=components, random_state=42)
-        reducer.fit(x_train)
-        pca_report[f"PCA {components}"] = {
-            "Số đặc trưng": components,
-            "Tỷ lệ phương sai PCA": float(reducer.explained_variance_ratio_.sum() * 100),
-        }
-    return pca_report
+        {key: {"scaler": scaler, "pca": None, "model": model}},
+    )
 
 
-def build_lstm_sequences(data: pd.DataFrame, window: int, split: int):
+def build_lstm_sequences(
+    data: pd.DataFrame,
+    window: int,
+    split: int,
+    pca_components: int | None = None,
+):
     scaler = StandardScaler()
     scaler.fit(data.loc[:split - 1, FEATURES])
     scaled = scaler.transform(data[FEATURES])
+    reducer = None
+    if pca_components is not None:
+        if pca_components <= 0 or pca_components > len(FEATURES):
+            raise ValueError(
+                f"PCA phải nằm trong khoảng 1 đến {len(FEATURES)} thành phần."
+            )
+        reducer = PCA(n_components=pca_components, random_state=42)
+        reducer.fit(scaled[:split])
+        scaled = reducer.transform(scaled)
+
     xs, ys, bases, dates, indices = [], [], [], [], []
     for end in range(window - 1, len(data)):
         xs.append(scaled[end - window + 1:end + 1])
@@ -258,19 +214,28 @@ def build_lstm_sequences(data: pd.DataFrame, window: int, split: int):
         np.asarray(xs)[train], np.asarray(ys)[train],
         np.asarray(xs)[test], np.asarray(ys)[test],
         np.asarray(bases)[test], np.asarray(dates)[test],
-        scaler,
+        scaler, reducer,
     )
 
 
-def train_lstm(data: pd.DataFrame, split: int, window: int = 60, epochs: int = 40, batch_size: int = 256):
+def train_lstm(
+    data: pd.DataFrame,
+    split: int,
+    window: int = 60,
+    epochs: int = 40,
+    batch_size: int = 256,
+    pca_components: int | None = None,
+):
     import tensorflow as tf
     from tensorflow.keras import Sequential
     from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
     from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
 
-    x_train, y_train, x_test, y_test, bases, dates, scaler = build_lstm_sequences(data, window, split)
+    (
+        x_train, y_train, x_test, y_test, bases, dates, scaler, reducer,
+    ) = build_lstm_sequences(data, window, split, pca_components)
     model = Sequential([
-        Input(shape=(window, len(FEATURES))),
+        Input(shape=(window, x_train.shape[2])),
         LSTM(96, return_sequences=True),
         Dropout(0.20),
         LSTM(48),
@@ -289,7 +254,13 @@ def train_lstm(data: pd.DataFrame, split: int, window: int = 60, epochs: int = 4
     predicted = bases * (1 + predicted_return)
     return model, metrics(actual, predicted), {
         "actual": actual, "predicted": predicted, "dates": dates,
-        "history": history.history, "artifacts": {"scaler": scaler, "window": window},
+        "history": history.history,
+        "artifacts": {
+            "scaler": scaler,
+            "pca": reducer,
+            "window": window,
+            "pca_components": pca_components,
+        },
     }
 
 
