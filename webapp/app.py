@@ -286,3 +286,16 @@ if knn_metrics:
             pd.DataFrame.from_dict(knn_metrics, orient="index"),
             use_container_width=True,
         )
+
+linear_metrics = metrics.get("Linear Regression")
+if linear_metrics:
+    with st.expander("Linear Regression hồi quy giá (22 đặc trưng)"):
+        st.dataframe(
+            pd.DataFrame([linear_metrics], index=["Linear Regression"]),
+            use_container_width=True,
+        )
+        if not (MODEL_DIR / "linear_predictions.csv").exists():
+            st.info(
+                "Bộ train này chưa lưu chuỗi dự đoán Linear Regression để xem trên biểu đồ. "
+                "Train lại bằng phiên bản mới để tạo kết quả này."
+            )
