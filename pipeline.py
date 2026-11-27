@@ -38,9 +38,15 @@ def _norm_col(value: object) -> str:
 def _parse_time(series: pd.Series) -> pd.Series:
     if pd.api.types.is_numeric_dtype(series):
         numeric = pd.to_numeric(series, errors="coerce")
-        unit = "ms" if numeric.dropna().abs().max() > 1e11 else "s"
+        maximum = numeric.dropna().abs().max()
+        unit = "ms" if pd.notna(maximum) and maximum > 1e11 else "s"
         return pd.to_datetime(numeric, unit=unit, errors="coerce", utc=True).dt.tz_localize(None)
-    return pd.to_datetime(series.astype(str).str.strip(), errors="coerce", utc=True).dt.tz_localize(None)
+    return pd.to_datetime(
+        series.astype(str).str.strip(),
+        errors="coerce",
+        utc=True,
+        format="mixed",
+    ).dt.tz_localize(None)
 
 
 def load_gold_csv(path: str | Path) -> pd.DataFrame:
@@ -79,28 +85,73 @@ def load_gold_csv(path: str | Path) -> pd.DataFrame:
     return result
 
 
-def clean_data(raw: pd.DataFrame, max_rows: int = 100_000, max_return_z: float = 8.0) -> tuple[pd.DataFrame, pd.DataFrame]:
+def infer_gap_threshold(dates: pd.Series) -> pd.Timedelta:
+    """Return a conservative threshold for separating unusually large time gaps."""
+    parsed = pd.to_datetime(dates, errors="coerce").dropna().sort_values()
+    differences = parsed.diff().dropna()
+    differences = differences[differences > pd.Timedelta(0)]
+    if differences.empty:
+        return pd.Timedelta(days=3)
+    cadence = differences.value_counts().index[0]
+    return max(cadence * 3, pd.Timedelta(days=3))
+
+
+def temporal_split_indices(
+    row_count: int,
+    train_fraction: float = 0.70,
+    validation_fraction: float = 0.15,
+) -> tuple[int, int]:
+    """Return chronological train and validation end positions."""
+    if not 0 < train_fraction < 1:
+        raise ValueError("Tỷ lệ train phải nằm trong khoảng (0, 1).")
+    if not 0 < validation_fraction < 1 or train_fraction + validation_fraction >= 1:
+        raise ValueError("Tỷ lệ validation phải dương và tổng train + validation nhỏ hơn 1.")
+    train_end = int(row_count * train_fraction)
+    validation_end = int(row_count * (train_fraction + validation_fraction))
+    if train_end < 1 or validation_end <= train_end or validation_end >= row_count:
+        raise ValueError("Không đủ dữ liệu để chia train/validation/test theo thời gian.")
+    return train_end, validation_end
+
+
+def clean_data(raw: pd.DataFrame, max_rows: int = 100_000) -> tuple[pd.DataFrame, pd.DataFrame]:
     d = raw.copy()
-    report = [{"step": "raw", "rows": len(d)}]
+    report = [{"step": "raw", "rows": len(d), "details": ""}]
+    d["date"] = _parse_time(d["date"])
+    missing_count = int(d[["date", "open", "high", "low", "close"]].isna().any(axis=1).sum())
     d = d.dropna(subset=["date", "open", "high", "low", "close"])
-    report.append({"step": "drop_missing", "rows": len(d)})
-    d = d.sort_values("date").drop_duplicates("date", keep="last")
-    report.append({"step": "sort_deduplicate", "rows": len(d)})
+    report.append({
+        "step": "drop_missing",
+        "rows": len(d),
+        "details": f"Removed {missing_count} rows with missing/invalid time or OHLC.",
+    })
+    d = d.sort_values("date", kind="stable")
+    duplicate_count = int(d["date"].duplicated(keep="last").sum())
+    d = d.drop_duplicates("date", keep="last")
+    report.append({
+        "step": "sort_deduplicate",
+        "rows": len(d),
+        "details": f"Removed {duplicate_count} duplicate timestamps; kept the last source row.",
+    })
     d = d[(d[["open", "high", "low", "close"]] > 0).all(axis=1)]
     d = d[(d["high"] >= d["low"]) & d["open"].between(d["low"], d["high"]) & d["close"].between(d["low"], d["high"])]
-    report.append({"step": "validate_ohlc", "rows": len(d)})
+    report.append({"step": "validate_ohlc", "rows": len(d), "details": ""})
     d["volume"] = d["volume"].fillna(0).clip(lower=0)
-    log_return = np.log(d["close"]).diff()
-    median, mad = log_return.median(), (log_return - log_return.median()).abs().median()
-    if pd.notna(mad) and mad > 0:
-        z = (log_return - median).abs() / (1.4826 * mad)
-        d = d[(z <= max_return_z) | z.isna()]
-    report.append({"step": "remove_return_outliers", "rows": len(d)})
-    d = d[(d["open"] != d["high"]) | (d["high"] != d["low"]) | (d["low"] != d["close"])]
+    report.append({
+        "step": "preserve_prices",
+        "rows": len(d),
+        "details": "No full-series return outlier filter; valid flat candles are retained.",
+    })
+    gap_threshold = infer_gap_threshold(d["date"])
+    gap_count = int(d["date"].diff().gt(gap_threshold).sum())
+    report.append({
+        "step": "detect_time_gaps",
+        "rows": len(d),
+        "details": f"{gap_count} gaps longer than {gap_threshold}. No rows were imputed.",
+    })
     if len(d) > max_rows:
         d = d.tail(max_rows)
     d = d.reset_index(drop=True)
-    report.append({"step": f"keep_latest_{max_rows}", "rows": len(d)})
+    report.append({"step": f"keep_latest_{max_rows}", "rows": len(d), "details": ""})
     return d, pd.DataFrame(report)
 
 
@@ -128,7 +179,42 @@ def make_features(clean: pd.DataFrame) -> pd.DataFrame:
     d["dow_sin"] = np.sin(2 * np.pi * d["date"].dt.dayofweek / 7)
     d["dow_cos"] = np.cos(2 * np.pi * d["date"].dt.dayofweek / 7)
     d["target_return"] = close.shift(-1) / close - 1
+    d["target_date"] = d["date"].shift(-1)
     return d.replace([np.inf, -np.inf], np.nan).dropna(subset=FEATURES + ["target_return"]).reset_index(drop=True)
+
+
+def _target_dates(data: pd.DataFrame) -> pd.Series:
+    if "target_date" in data:
+        return pd.to_datetime(data["target_date"], errors="coerce")
+    return pd.to_datetime(data["date"], errors="coerce").shift(-1)
+
+
+def _prediction_output(
+    data: pd.DataFrame,
+    test_indices: np.ndarray,
+    predicted: np.ndarray,
+) -> dict[str, np.ndarray]:
+    target_dates = _target_dates(data)
+    actual = data["close"].to_numpy() * (1 + data["target_return"].to_numpy())
+    naive = data["close"].to_numpy()
+    predictions = np.full(len(data), np.nan)
+    predictions[test_indices] = predicted
+    naive_output = np.full(len(data), np.nan)
+    naive_output[test_indices] = naive[test_indices]
+    return {
+        "actual": actual,
+        "predicted": predictions,
+        "naive_predicted": naive_output,
+        "dates": target_dates.astype(str).to_numpy(),
+    }
+
+
+def _split_labels(length: int, train_end: int, test_start: int) -> np.ndarray:
+    return np.where(
+        np.arange(length) < train_end,
+        "train",
+        np.where(np.arange(length) < test_start, "validation", "test"),
+    )
 
 
 def metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
@@ -140,27 +226,41 @@ def metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
     }
 
 
-def train_linear(data: pd.DataFrame, split: int, pca_components: int = 0) -> tuple[LinearRegression, dict, dict]:
+def train_linear(
+    data: pd.DataFrame,
+    split: int,
+    pca_components: int = 0,
+    validation_split: int | None = None,
+) -> tuple[LinearRegression, dict, dict]:
+    train_end = validation_split if validation_split is not None else split
     scaler = StandardScaler()
-    x_train = scaler.fit_transform(data.loc[:split - 1, FEATURES])
-    x_test = scaler.transform(data.loc[split:, FEATURES])
-    model = LinearRegression().fit(x_train, data.loc[:split - 1, "target_return"])
-    base = data.loc[split:, "close"].to_numpy()
-    actual = data.loc[split:, "close"].to_numpy() * (1 + data.loc[split:, "target_return"].to_numpy())
-    predicted = base * (1 + model.predict(x_test))
+    x_train = scaler.fit_transform(data.iloc[:train_end][FEATURES])
+    test_indices = np.arange(split, len(data))
+    x_test = scaler.transform(data.iloc[split:][FEATURES])
+    model = LinearRegression().fit(x_train, data.iloc[:train_end]["target_return"])
+    test_rows = data.iloc[split:]
+    actual_test = test_rows["close"].to_numpy() * (1 + test_rows["target_return"].to_numpy())
+    predicted_test = test_rows["close"].to_numpy() * (1 + model.predict(x_test))
     artifacts = {"scaler": scaler, "pca": None, "model": model}
-    return model, metrics(actual, predicted), {"actual": actual, "predicted": predicted, "dates": data.loc[split:, "date"].astype(str).to_numpy(), "artifacts": artifacts}
+    output = _prediction_output(data, test_indices, predicted_test)
+    output["split"] = _split_labels(len(data), train_end, split)
+    baseline_metrics = metrics(actual_test, test_rows["close"].to_numpy())
+    output["baseline_metrics"] = baseline_metrics
+    output["artifacts"] = artifacts
+    return model, metrics(actual_test, predicted_test), output
 
 
 def train_knn(
     data: pd.DataFrame,
     split: int,
+    validation_split: int | None = None,
 ) -> tuple[dict[str, dict], dict[str, dict]]:
+    train_end = validation_split if validation_split is not None else split
     y = (data["target_return"] > 0).astype(int)
-    x_train_full = data.loc[:split - 1, FEATURES]
-    x_test_full = data.loc[split:, FEATURES]
-    y_train = y.loc[:split - 1]
-    y_test = y.loc[split:]
+    x_train_full = data.iloc[:train_end][FEATURES]
+    x_test_full = data.iloc[split:][FEATURES]
+    y_train = y.iloc[:train_end]
+    y_test = y.iloc[split:]
     scaler = StandardScaler()
     x_train = scaler.fit_transform(x_train_full)
     x_test = scaler.transform(x_test_full)
@@ -186,9 +286,18 @@ def build_lstm_sequences(
     window: int,
     split: int,
     pca_components: int | None = None,
+    validation_split: int | None = None,
 ):
+    if window < 1:
+        raise ValueError("window phải lớn hơn 0.")
+    if split <= 0 or split >= len(data):
+        raise ValueError("Mốc test phải nằm giữa các dòng dữ liệu.")
+    train_end = validation_split if validation_split is not None else int(split * 0.9)
+    if train_end < window or train_end >= split:
+        raise ValueError("Cần đủ dữ liệu theo thứ tự thời gian cho train, validation và test.")
+    data = data.reset_index(drop=True)
     scaler = StandardScaler()
-    scaler.fit(data.loc[:split - 1, FEATURES])
+    scaler.fit(data.iloc[:train_end][FEATURES])
     scaled = scaler.transform(data[FEATURES])
     reducer = None
     if pca_components is not None:
@@ -197,24 +306,28 @@ def build_lstm_sequences(
                 f"PCA phải nằm trong khoảng 1 đến {len(FEATURES)} thành phần."
             )
         reducer = PCA(n_components=pca_components, random_state=42)
-        reducer.fit(scaled[:split])
+        reducer.fit(scaled[:train_end])
         scaled = reducer.transform(scaled)
 
     xs, ys, bases, dates, indices = [], [], [], [], []
     for end in range(window - 1, len(data)):
         xs.append(scaled[end - window + 1:end + 1])
-        ys.append(data.loc[end, "target_return"])
-        bases.append(data.loc[end, "close"])
-        dates.append(str(data.loc[end, "date"]))
+        ys.append(data.iloc[end]["target_return"])
+        bases.append(data.iloc[end]["close"])
+        dates.append(str(_target_dates(data).iloc[end]))
         indices.append(end)
     indices = np.asarray(indices)
-    train = indices < split
-    test = ~train
+    xs = np.asarray(xs)
+    ys = np.asarray(ys)
+    train = indices < train_end
+    validation = (indices >= train_end) & (indices < split)
+    test = indices >= split
     return (
-        np.asarray(xs)[train], np.asarray(ys)[train],
-        np.asarray(xs)[test], np.asarray(ys)[test],
+        xs[train], ys[train],
+        xs[validation], ys[validation],
+        xs[test], ys[test],
         np.asarray(bases)[test], np.asarray(dates)[test],
-        scaler, reducer,
+        indices[test], scaler, reducer,
     )
 
 
@@ -225,6 +338,7 @@ def train_lstm(
     epochs: int = 40,
     batch_size: int = 256,
     pca_components: int | None = None,
+    validation_split: int | None = None,
 ):
     import tensorflow as tf
     from tensorflow.keras import Sequential
@@ -232,8 +346,11 @@ def train_lstm(
     from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
 
     (
-        x_train, y_train, x_test, y_test, bases, dates, scaler, reducer,
-    ) = build_lstm_sequences(data, window, split, pca_components)
+        x_train, y_train, x_val, y_val, x_test, y_test,
+        bases, dates, test_indices, scaler, reducer,
+    ) = build_lstm_sequences(
+        data, window, split, pca_components, validation_split
+    )
     model = Sequential([
         Input(shape=(window, x_train.shape[2])),
         LSTM(96, return_sequences=True),
@@ -245,22 +362,29 @@ def train_lstm(
     ])
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3, clipnorm=1.0), loss="mse", metrics=["mae"])
     history = model.fit(
-        x_train, y_train, validation_split=0.1, epochs=epochs, batch_size=batch_size,
+        x_train, y_train, validation_data=(x_val, y_val),
+        epochs=epochs, batch_size=batch_size, shuffle=False,
         callbacks=[EarlyStopping(patience=7, restore_best_weights=True), ReduceLROnPlateau(patience=3, factor=0.5)],
         verbose=1,
     )
     predicted_return = model.predict(x_test, batch_size=batch_size, verbose=0).ravel()
-    actual = bases * (1 + y_test)
-    predicted = bases * (1 + predicted_return)
-    return model, metrics(actual, predicted), {
-        "actual": actual, "predicted": predicted, "dates": dates,
+    actual_test = bases * (1 + y_test)
+    predicted_test = bases * (1 + predicted_return)
+    output = _prediction_output(data, test_indices, predicted_test)
+    output["dates"][test_indices] = dates
+    train_end = validation_split if validation_split is not None else int(split * 0.9)
+    output["split"] = _split_labels(len(data), train_end, split)
+    output["baseline_metrics"] = metrics(actual_test, bases)
+    output["history"] = history.history
+    output["artifacts"] = {
+        "scaler": scaler,
+        "pca": reducer,
+        "window": window,
+        "pca_components": pca_components,
+    }
+    return model, metrics(actual_test, predicted_test), {
+        **output,
         "history": history.history,
-        "artifacts": {
-            "scaler": scaler,
-            "pca": reducer,
-            "window": window,
-            "pca_components": pca_components,
-        },
     }
 
 

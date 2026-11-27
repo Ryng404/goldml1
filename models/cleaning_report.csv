@@ -1,0 +1,8 @@
+step,rows,details
+raw,494235,
+drop_missing,494235,Removed 0 rows with missing/invalid time or OHLC.
+sort_deduplicate,494235,Removed 0 duplicate timestamps; kept the last source row.
+validate_ohlc,494235,
+preserve_prices,494235,No full-series return outlier filter; valid flat candles are retained.
+detect_time_gaps,494235,58 gaps longer than 3 days 00:00:00. No rows were imputed.
+keep_latest_100000,100000,

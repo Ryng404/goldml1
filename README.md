@@ -6,7 +6,9 @@ Dự án gồm pipeline huấn luyện và dashboard Streamlit theo dõi kết q
 - **K-NN**: phân loại xu hướng tăng/giảm trên 22 đặc trưng, không dùng PCA.
 - **LSTM**: mô hình chuỗi chính, học 60 phiên gần nhất và dự đoán phần trăm thay đổi của phiên kế tiếp. Huấn luyện 5 cấu hình để so sánh: 22 đặc trưng gốc và PCA 12, 6, 3 hoặc 1 thành phần.
 
-Pipeline mặc định dùng tối đa **100.000 dòng mới nhất** từ CSV Kaggle. Cách xử lý dữ liệu gồm chuẩn hóa tên cột, parse thời gian, loại dòng lỗi/trùng, kiểm tra OHLC, loại outlier bằng ngưỡng IQR trên log-return và tạo đặc trưng kỹ thuật không nhìn trước tương lai.
+Pipeline mặc định dùng tối đa **100.000 dòng mới nhất** từ CSV Kaggle. Cách xử lý dữ liệu gồm chuẩn hóa tên cột, ép thời gian về datetime, sắp xếp tăng dần, loại dòng lỗi/trùng, kiểm tra OHLC và báo cáo các khoảng trống thời gian lớn. Không nội suy giá, không loại nến phẳng hợp lệ và không lọc outlier bằng thống kê toàn chuỗi; nhờ vậy không tạo khoảng trống nhân tạo hoặc dùng thông tin từ tập kiểm tra để làm sạch dữ liệu.
+
+Dữ liệu được chia theo thời gian thành **70% Train / 15% Validation / 15% Test**. Scaler và PCA chỉ fit trên Train; LSTM dùng Validation theo thời gian để early stopping và không shuffle. Chỉ số trên Test gồm RMSE, MAE, MAPE và so sánh với **Naive Baseline** (dùng giá đóng cửa phiên trước). Các file dự đoán lưu cả giá thực theo ngày đích, nhãn phân đoạn và dự đoán Test để dashboard hiển thị đúng ranh giới tập.
 
 ## Chạy nhanh
 
@@ -19,7 +21,7 @@ python train.py --csv /path/to/gold.csv --max-rows 100000
 streamlit run webapp/app.py
 ```
 
-Sau khi train, dashboard tự động đọc các kết quả trong `models/`. Ở thanh bên, chọn Linear Regression hoặc một cấu hình LSTM để xem biểu đồ giá thực tế/dự đoán và chỉ số tương ứng. Mặc định chạy LSTM với PCA 12, 6, 3 và 1 thành phần:
+Sau khi train, dashboard tự động đọc các kết quả trong `models/`. Ở thanh bên, chọn Linear Regression hoặc một cấu hình LSTM để xem biểu đồ giá thực tế/dự đoán, Naive Baseline và chỉ số tương ứng. Biểu đồ đánh dấu mốc Validation/Test, tô vùng khoảng trống lớn (không nối đường qua khoảng trống) và có chế độ zoom 7 ngày. Mặc định chạy LSTM với PCA 12, 6, 3 và 1 thành phần:
 
 ```bash
 python train.py --csv /path/to/gold.csv --pca-components 12 6 3 1
