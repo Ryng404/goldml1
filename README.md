@@ -25,6 +25,14 @@ Sau khi train, dashboard tự động đọc các kết quả trong `models/`. �
 python train.py --csv /path/to/gold.csv --pca-components 12 6 3 1
 ```
 
+### TensorFlow trên Windows
+
+Huấn luyện LSTM cần TensorFlow nạp được thư viện native runtime. Nếu Windows Application Control chặn DLL của TensorFlow, lệnh train mặc định sẽ dừng và báo lỗi rõ ràng thay vì giả vờ chạy LSTM. Hãy huấn luyện trong môi trường Linux/WSL2 được phép hoặc nhờ quản trị viên cho phép TensorFlow. Nếu chỉ muốn chạy baseline Linear Regression, hãy bật rõ chế độ dự phòng:
+
+```bash
+python train.py --csv /path/to/gold.csv --allow-linear-fallback
+```
+
 ## Dữ liệu Kaggle
 
 CSV cần có các cột tương đương `date/time`, `open`, `high`, `low`, `close`; cột volume là tùy chọn. Bộ đọc tự nhận dạng dấu phẩy, chấm phẩy và tab. Nếu file có hai cột `date` và `time`, chúng sẽ được ghép lại.

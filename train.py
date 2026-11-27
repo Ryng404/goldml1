@@ -28,7 +28,38 @@ def main():
         default=[12, 6, 3, 1],
         help="Các số thành phần PCA cần thử cho LSTM.",
     )
+    parser.add_argument(
+        "--allow-linear-fallback",
+        action="store_true",
+        help="Chỉ chạy Linear Regression nếu TensorFlow không khả dụng.",
+    )
     args = parser.parse_args()
+
+    lstm_error = None
+    try:
+        import tensorflow  # noqa: F401
+    except (ImportError, OSError) as exc:
+        if "Application Control" in str(exc):
+            lstm_error = (
+                "Windows Application Control đang chặn TensorFlow DLL. "
+                "Hãy chạy trong môi trường Linux/WSL2 được phép hoặc nhờ "
+                "quản trị viên cho phép thư viện TensorFlow."
+            )
+        else:
+            lstm_error = (
+                "TensorFlow không tải được. Kiểm tra phiên bản Python, "
+                "TensorFlow và môi trường cài đặt."
+            )
+        if not args.allow_linear_fallback:
+            parser.error(
+                f"{lstm_error}\n"
+                "Nếu chỉ muốn chạy baseline Linear Regression, thêm "
+                "--allow-linear-fallback."
+            )
+        print(
+            "Cảnh báo: TensorFlow không khả dụng; "
+            "đang chạy baseline theo yêu cầu --allow-linear-fallback."
+        )
 
     root = Path(__file__).parent
     model_dir = root / "models"
@@ -61,9 +92,8 @@ def main():
     }
 
     prediction_output = linear_output
-    prediction_source = "LSTM (22 features)"
-    lstm_error = None
-    try:
+    prediction_source = "Linear Regression" if lstm_error else "LSTM (22 features)"
+    if not lstm_error:
         variants = [(None, "LSTM (22 features)", "lstm")]
         variants.extend(
             (components, f"LSTM + PCA {components} components", f"lstm_pca{components}")
@@ -94,11 +124,6 @@ def main():
             if components is None:
                 prediction_output = lstm_output
                 save_json(model_dir / "history.json", lstm_output["history"])
-    except ImportError as exc:
-        lstm_error = str(exc)
-        prediction_source = "Linear Regression"
-        print(f"Cảnh báo: Không thể huấn luyện LSTM: {exc}")
-        print("Đang lưu dự đoán tạm bằng Linear Regression.")
 
     pd.DataFrame(
         {
