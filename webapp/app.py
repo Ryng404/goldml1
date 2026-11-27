@@ -8,6 +8,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_DIR = ROOT / "models"
 MODEL_VARIANTS = [
+    ("Linear Regression", "linear"),
     ("LSTM (22 features)", "lstm"),
     ("LSTM + PCA 12 components", "lstm_pca12"),
     ("LSTM + PCA 6 components", "lstm_pca6"),
@@ -89,13 +90,20 @@ for label, model_name in MODEL_VARIANTS:
     if label in metrics and pred_path.exists():
         available_models.append((label, model_name, pred_path))
 
-# Read older training output as the uncompressed LSTM variant.
+# Support older training output that only saved the selected model predictions.
 legacy_lstm_path = MODEL_DIR / "predictions.csv"
 if not any(model_name == "lstm" for _, model_name, _ in available_models):
-    if "LSTM" in metrics and legacy_lstm_path.exists():
-        available_models.insert(0, (MODEL_VARIANTS[0][0], "lstm", legacy_lstm_path))
-    elif metrics.get("prediction_source") == "LSTM" and legacy_lstm_path.exists():
-        available_models.insert(0, (MODEL_VARIANTS[0][0], "lstm", legacy_lstm_path))
+    if "LSTM (22 features)" in metrics and legacy_lstm_path.exists():
+        available_models.insert(0, ("LSTM (22 features)", "lstm", legacy_lstm_path))
+    elif metrics.get("prediction_source") in ("LSTM", "LSTM (22 features)") and legacy_lstm_path.exists():
+        available_models.insert(0, ("LSTM (22 features)", "lstm", legacy_lstm_path))
+if (
+    "Linear Regression" in metrics
+    and not any(model_name == "linear" for _, model_name, _ in available_models)
+    and metrics.get("prediction_source") == "Linear Regression"
+    and legacy_lstm_path.exists()
+):
+    available_models.insert(0, ("Linear Regression", "linear", legacy_lstm_path))
 
 if not available_models:
     if metrics.get("lstm_error"):
@@ -228,14 +236,17 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-st.markdown('<div class="section-label">Hiệu suất các cấu hình LSTM</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-label">Hiệu suất các mô hình dự đoán</div>', unsafe_allow_html=True)
 comparison_rows = []
 for label, model_name, _ in available_models:
     row_metrics = metrics.get(label, {})
     comparison_rows.append(
         {
             "Mô hình": label,
-            "Số chiều đầu vào": 22 if model_name == "lstm" else int(model_name.removeprefix("lstm_pca")),
+            "Số chiều đầu vào": (
+                22 if model_name in ("linear", "lstm")
+                else int(model_name.removeprefix("lstm_pca"))
+            ),
             "MAE": row_metrics.get("MAE"),
             "RMSE": row_metrics.get("RMSE"),
             "R²": row_metrics.get("R2"),

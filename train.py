@@ -78,6 +78,13 @@ def main():
         {"default": linear_output["artifacts"]},
         model_dir / "linear.joblib",
     )
+    pd.DataFrame(
+        {
+            "date": linear_output["dates"],
+            "actual": linear_output["actual"],
+            "predicted": linear_output["predicted"],
+        }
+    ).to_csv(model_dir / "linear_predictions.csv", index=False)
     joblib.dump(knn_artifacts, model_dir / "knn.joblib")
     report.to_csv(model_dir / "cleaning_report.csv", index=False)
     data.to_csv(model_dir / "features.csv", index=False)

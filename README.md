@@ -19,11 +19,19 @@ python train.py --csv /path/to/gold.csv --max-rows 100000
 streamlit run webapp/app.py
 ```
 
-Sau khi train, dashboard tự động đọc các kết quả trong `models/`. Ở thanh bên, chọn một trong các cấu hình LSTM để xem biểu đồ và chỉ số tương ứng. Mặc định chạy LSTM với PCA 12, 6, 3 và 1 thành phần:
+Sau khi train, dashboard tự động đọc các kết quả trong `models/`. Ở thanh bên, chọn Linear Regression hoặc một cấu hình LSTM để xem biểu đồ giá thực tế/dự đoán và chỉ số tương ứng. Mặc định chạy LSTM với PCA 12, 6, 3 và 1 thành phần:
 
 ```bash
 python train.py --csv /path/to/gold.csv --pca-components 12 6 3 1
 ```
+
+Để thay bộ dữ liệu, truyền đường dẫn tới CSV mới khi chạy `train.py`; không cần đổi tên hay đưa CSV vào Git. Ví dụ:
+
+```bash
+python train.py --csv /path/to/new_gold.csv --max-rows 100000
+```
+
+Lệnh này làm sạch và dùng tối đa 100.000 dòng hợp lệ mới nhất, sau đó tạo lại các kết quả trong `models/`. CSV cần có cột ngày/giờ và OHLC (`open`, `high`, `low`, `close`); volume là tùy chọn.
 
 ### TensorFlow trên Windows
 
